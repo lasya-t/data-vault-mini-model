@@ -52,7 +52,9 @@ def _insert_hub(con, table, key_col, hk_col, src_view, source, day):
 
 
 def _insert_sat(con, table, hk_expr, hk_col, attrs, src_view, source, day):
-    # insert only when the attributes differ from the latest satellite row for that key
+    # insert only when the attributes differ from the latest row AS OF this load date.
+    # Comparing with the latest row overall breaks replays: re-running an old day would see
+    # newer values as "current" and insert the old values again, dated in the past.
     a = ", ".join(attrs)
     con.execute(f"""
         INSERT INTO {table}
@@ -60,6 +62,7 @@ def _insert_sat(con, table, hk_expr, hk_col, attrs, src_view, source, day):
         FROM (SELECT DISTINCT {hk_expr} AS hk, {hashdiff(*attrs)} AS hd, {a} FROM {src_view}) s
         LEFT JOIN (
             SELECT {hk_col}, hashdiff FROM {table}
+            WHERE load_date <= DATE '{day}'
             QUALIFY row_number() OVER (PARTITION BY {hk_col} ORDER BY load_date DESC) = 1
         ) cur ON cur.{hk_col} = s.hk
         WHERE cur.hashdiff IS DISTINCT FROM s.hd
